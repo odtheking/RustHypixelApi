@@ -1,9 +1,9 @@
-use std::{str::FromStr, sync::{LazyLock, atomic::Ordering}, time::{Duration, Instant}};
+use std::{str::FromStr, sync::LazyLock, time::{Duration, Instant}};
 
 use actix_web::{Responder, error::ErrorInternalServerError, get, web::{Bytes, Data, Path}};
 use uuid::Uuid;
 
-use crate::{cache::{cache_key::CacheKey, cache_router::{CacheRouter, Database}, compression::{compress, decompress}}, env_var, error::ProcessError, logging::{LogMessage, log}, request_utils::{json_response, request}, routes::stats::{RateLimit, stats_from_headers}};
+use crate::{cache::{cache_key::{CacheKey, MemoryPool}, cache_router::{CacheRouter, Database}, compression::{compress, decompress}}, env_var, error::ProcessError, logging::{LogMessage, log}, request_utils::{json_response, request}, routes::stats::RateLimit};
 
 /// Database time to live for profile queries in seconds.
 pub static PROFILE_DB_TTL_SECONDS: LazyLock<Duration> = LazyLock::new(|| Duration::from_secs(env_var("PROFILE_DB_TTL_SECONDS", 3600)));
@@ -14,6 +14,7 @@ struct ProfileKey(Uuid);
 
 impl CacheKey for ProfileKey {
     const KEYFLAG: u8 = 0;
+    const POOL: MemoryPool = MemoryPool::Profiles;
 
     fn uuid(&self) -> Uuid {
         self.0
@@ -32,11 +33,8 @@ impl CacheKey for ProfileKey {
             return Ok((decompressed.into(), *PROFILE_CACHE_TTL_SECONDS))
         }
 
-        let res = request(uuid_key, format!("https://api.hypixel.net/v2/skyblock/profiles?uuid={}", self.uuid())).await?;
-        if let Some((remaining, reset)) = stats_from_headers(res.headers()) {
-            stats.store(remaining, reset, Ordering::Relaxed);
-        }
-        
+        let res = request(uuid_key, format!("https://api.hypixel.net/v2/skyblock/profiles?uuid={}", self.uuid()), stats).await?;
+
         let bytes = res.bytes().await?;
         let compressed = compress(&bytes);
         
@@ -55,6 +53,6 @@ async fn profile(
     stats: Data<RateLimit>,
 ) -> actix_web::Result<impl Responder> {
     let uuid = Uuid::from_str(&path.into_inner()).map_err(ErrorInternalServerError)?;
-    let data = cache.get(ProfileKey(uuid), &stats).await?;
+    let data = cache.into_inner().get(ProfileKey(uuid), stats.into_inner()).await?;
     Ok(json_response(data))
 }

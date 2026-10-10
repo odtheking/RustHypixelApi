@@ -28,3 +28,25 @@ To update the server:
 2. run `git pull`
 3. rebuild the repo using `cargo build --release`
 4. run `pm2 restart 0` to restart the server
+
+## Configuration
+
+Everything is configured with environment variables. Only `API_KEY` is required, anything else falls back to its default (and logs that it did on startup). A value that can't be parsed will panic on startup.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `API_KEY` | none, **required** | Hypixel api key used for upstream requests. |
+| `IP_ADDR` | `127.0.0.1` | Address to bind to (port is always `8000`). Use `0.0.0.0` when running in docker. |
+| `RATELIMIT_REFRESH` | `3` | Seconds it takes a client (by real ip) to regain one request of its rate limit allowance. |
+| `RATELIMIT_BURST` | `10` | Number of requests a client can make at once before being rate limited. |
+| `PROFILE_CACHE_TTL_SECONDS` | `120` | How long a profile (`/get/<uuid>`) stays in the memory cache. |
+| `PROFILE_DB_TTL_SECONDS` | `3600` | How long a profile stays in the on-disk database. A profile found there is served without asking hypixel. |
+| `SECRETS_TTL_SECONDS` | `120` | How long secrets (`/secrets/<uuid>`) stay in the memory cache. Secrets are not stored in the database. |
+| `PROFILE_CACHE_SIZE` | `512` | Max number of profiles in the memory cache. Counted in entries, not bytes, and a profile can be hundreds of KB, so this is the one that costs memory. A miss only costs a database read. |
+| `SECRETS_CACHE_SIZE` | `10000` | Max number of secrets in the memory cache. Entries are tiny, and a miss costs a hypixel request, so keep this large. |
+
+The memory caches are separate so profiles can never push secrets out.
+
+### Hypixel rate limiting
+
+When hypixel responds with a `429`, the proxy remembers it (using the `Retry-After` / `RateLimit-Reset` headers, or 10 seconds if there are none, capped at 5 minutes) and answers `429` immediately without contacting hypixel until that time has passed. The same happens when a response reports `RateLimit-Remaining: 0`. Errors are never cached, so without this every client retry would be sent to hypixel again. The latest values are visible at `/stats`.

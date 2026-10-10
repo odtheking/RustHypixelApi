@@ -5,11 +5,20 @@ use uuid::Uuid;
 
 use crate::{cache::{UuidKey, cache_router::Database}, error::ProcessError, routes::stats::RateLimit};
 
+/// Which in-memory cache a key is stored in. Pools are sized separately since profiles are large and secrets are tiny.
+pub enum MemoryPool {
+    Profiles,
+    Secrets,
+}
+
 pub trait CacheKey: Send {
     /// flag for db storage/etc. 
     /// MUST be unique across implementations of `CacheKey`.
     /// can only store a max of 8 values rn
     const KEYFLAG: u8;
+
+    /// the memory cache this key is stored in.
+    const POOL: MemoryPool;
     
     fn uuid(&self) -> Uuid;
 
