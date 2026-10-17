@@ -37,8 +37,16 @@ Everything is configured with environment variables. Only `API_KEY` is required,
 | --- | --- | --- |
 | `API_KEY` | none, **required** | Hypixel api key used for upstream requests. |
 | `IP_ADDR` | `127.0.0.1` | Address to bind to (port is always `8000`). Use `0.0.0.0` when running in docker. |
-| `RATELIMIT_REFRESH` | `3` | Seconds it takes a client (by real ip) to regain one request of its rate limit allowance. |
-| `RATELIMIT_BURST` | `10` | Number of requests a client can make at once before being rate limited. |
+| `RATELIMIT_REQUESTS` | `30` | How many requests a client (by real ip) can make per `RATELIMIT_PERIOD_SECONDS`, counting every request including ones answered from the cache or database. |
+| `RATELIMIT_PERIOD_SECONDS` | `60` | The period `RATELIMIT_REQUESTS` is measured over. |
+| `RATELIMIT_BURST` | `30` | How many requests a client can make at once before being limited. |
+| `SECRETS_RATELIMIT_REQUESTS` | `4` | How many secrets requests per `SECRETS_RATELIMIT_PERIOD_SECONDS` a client can make that have to be sent to hypixel (not in the cache). |
+| `SECRETS_RATELIMIT_PERIOD_SECONDS` | `120` | The period `SECRETS_RATELIMIT_REQUESTS` is measured over. |
+| `SECRETS_RATELIMIT_BURST` | `4` | How many of those requests a client can make at once before being limited. |
+| `PROFILE_RATELIMIT_REQUESTS` | `5` | How many profile requests per `PROFILE_RATELIMIT_PERIOD_SECONDS` a client can make that have to be sent to hypixel (not in the cache or database). |
+| `PROFILE_RATELIMIT_PERIOD_SECONDS` | `60` | The period `PROFILE_RATELIMIT_REQUESTS` is measured over. |
+| `PROFILE_RATELIMIT_BURST` | `5` | How many of those requests a client can make at once before being limited. |
+| `UPSTREAM_TIMEOUT_SECONDS` | `10` | How long to wait for hypixel to answer a request before giving up with a `504`. |
 | `PROFILE_CACHE_TTL_SECONDS` | `120` | How long a profile (`/get/<uuid>`) stays in the memory cache. |
 | `PROFILE_DB_TTL_SECONDS` | `3600` | How long a profile stays in the on-disk database. A profile found there is served without asking hypixel. |
 | `SECRETS_TTL_SECONDS` | `120` | How long secrets (`/secrets/<uuid>`) stay in the memory cache. Secrets are not stored in the database. |
@@ -47,6 +55,27 @@ Everything is configured with environment variables. Only `API_KEY` is required,
 
 The memory caches are separate so profiles can never push secrets out.
 
-### Hypixel rate limiting
+### Rate limiting
 
-When hypixel responds with a `429`, the proxy remembers it (using the `Retry-After` / `RateLimit-Reset` headers, or 10 seconds if there are none, capped at 5 minutes) and answers `429` immediately without contacting hypixel until that time has passed. The same happens when a response reports `RateLimit-Remaining: 0`. Errors are never cached, so without this every client retry would be sent to hypixel again. The latest values are visible at `/stats`.
+Every client has three separate rate limits. Every request counts towards the `RATELIMIT_*` limit, including ones answered from the cache. Requests that have to be sent to hypixel also count towards a smaller limit, `SECRETS_RATELIMIT_*` for secrets or `PROFILE_RATELIMIT_*` for profiles. Each is `REQUESTS` per `PERIOD_SECONDS` with up to `BURST` at once, for example 5 per 60 seconds with a burst of 5 allows 5 immediately, then one every 12 seconds. All values must be above zero.
+
+The `RATELIMIT_*` limit only protects this server from abuse and does not depend on the hypixel key. The default allows 30 requests per minute per client.
+
+When a request is already being fetched, everyone asking for the same thing waits on it and gets its result. The request to hypixel is paid for by any one of the clients waiting on it that is within their limit, so a client over its limit still gets the result when someone else waiting is not. Every one of them still counts towards their own `RATELIMIT_*` limit, only the hypixel limit is shared. When hypixel is rate limiting us or fails, an expired cached entry (up to an hour old) is served instead of an error if there is one.
+
+Clients are identified by the `X-Real-IP` header set by the reverse proxy, falling back to `X-Forwarded-For`, and these are only trusted when the connection comes from a loopback or private address (your proxy), otherwise the connection address is used. The fallback can be set by the client, so make sure your proxy sets `X-Real-IP` (the nginx config from the install script does). ipv6 clients are limited by their /64.
+
+### Errors
+
+Errors are plain text, short enough for a client to show to the user as is. The message says who the error is from, `Hypixel error` or `Proxy error`, and then what it is:
+
+| Status | Message |
+| --- | --- |
+| `429` | `Hypixel error: rate limited, try again in a moment` |
+| `429` | `Proxy error: too many requests, slow down` |
+| `502` | `Hypixel error: responded with 403 Forbidden` (whatever status hypixel answered with) |
+| `502` | `Hypixel error: could not be reached` |
+| `504` | `Hypixel error: did not respond in time` |
+| `400` | `Proxy error: invalid uuid` |
+| `500` | `Proxy error: ...` |
+

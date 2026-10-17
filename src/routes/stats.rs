@@ -1,9 +1,12 @@
-use std::{sync::{LazyLock, atomic::{AtomicU64, Ordering}}, time::{Duration, Instant}};
+use std::{num::NonZeroU32, sync::{LazyLock, atomic::{AtomicU64, Ordering}}, time::{Duration, Instant}};
 
 use actix_web::{HttpResponse, Responder, get, web::Data};
+use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter};
 use portable_atomic::AtomicU128;
 use reqwest::{StatusCode, header::HeaderMap};
 use simd_json::json;
+
+use crate::{cache::cache_key::MemoryPool, client::ClientId, error::ProcessError};
 
 /// Used when hypixel rate limits us but doesn't tell us for how long.
 const DEFAULT_BLOCK: Duration = Duration::from_secs(10);
@@ -14,6 +17,24 @@ pub struct RateLimit {
     inner: AtomicU128,
     /// `now_millis()` until which hypixel is known to be rate limiting us.
     blocked_until: AtomicU64,
+    /// limits all requests from a client, including ones answered from the cache.
+    requests: DefaultKeyedRateLimiter<ClientId>,
+    /// limits secrets requests from a client that have to be sent to hypixel.
+    secrets: DefaultKeyedRateLimiter<ClientId>,
+    /// limits profile requests from a client that have to be sent to hypixel.
+    profiles: DefaultKeyedRateLimiter<ClientId>,
+}
+
+/// `requests` per `period_seconds`, with up to `burst` allowed at once.
+///
+/// # Panics
+/// panics if any of the values are zero.
+pub fn quota(requests: u32, period_seconds: u64, burst: u32) -> Quota {
+    let requests = NonZeroU32::new(requests).expect("rate limit requests should be above zero!");
+    let burst = NonZeroU32::new(burst).expect("rate limit burst should be above zero!");
+    Quota::with_period(Duration::from_secs(period_seconds) / requests.get())
+        .expect("rate limit period should be above zero!")
+        .allow_burst(burst)
 }
 
 /// monotonic millis since startup, so wall clock jumps can't stretch or cut a block.
@@ -24,10 +45,47 @@ fn now_millis() -> u64 {
 }
 
 impl RateLimit {
-    pub fn new() -> Self {
+    pub fn new(requests: Quota, secrets: Quota, profiles: Quota) -> Self {
         Self {
             inner: AtomicU128::new(0),
             blocked_until: AtomicU64::new(0),
+            requests: RateLimiter::keyed(requests),
+            secrets: RateLimiter::keyed(secrets),
+            profiles: RateLimiter::keyed(profiles),
+        }
+    }
+
+    /// # Errors
+    /// if the client has made too many requests.
+    pub fn check_request(&self, client: ClientId) -> Result<(), ProcessError> {
+        self.requests.check_key(&client).map_err(|_| ProcessError::ProxyRateLimit)
+    }
+
+    /// Spends a request to hypixel of the first of `clients` that is within their limit. Everyone waiting on the same request gets its
+    /// result, so it only takes one of them.
+    ///
+    /// # Errors
+    /// if every one of the clients has made too many requests that had to be sent to hypixel.
+    pub fn check_upstream(&self, clients: &[ClientId], pool: MemoryPool) -> Result<(), ProcessError> {
+        let limiter = match pool {
+            MemoryPool::Profiles => &self.profiles,
+            MemoryPool::Secrets => &self.secrets,
+        };
+        if clients.iter().any(|client| limiter.check_key(client).is_ok()) {
+            Ok(())
+        } else {
+            Err(ProcessError::ProxyRateLimit)
+        }
+    }
+
+    /// Forgets clients that have their full allowance back, so they don't build up forever.
+    /// Giving the freed memory back needs every shard locked, so that is only done when asked to.
+    pub fn cleanup(&self, shrink: bool) {
+        for limiter in [&self.requests, &self.secrets, &self.profiles] {
+            limiter.retain_recent();
+            if shrink {
+                limiter.shrink_to_fit();
+            }
         }
     }
 
@@ -84,4 +142,29 @@ async fn statistics(
         "RateLimit-Reset": reset
     });
     Ok(HttpResponse::Ok().json(json))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{IpAddr, Ipv4Addr};
+
+    use super::*;
+
+    fn client(last: u8) -> ClientId {
+        IpAddr::V4(Ipv4Addr::new(10, 0, 0, last))
+    }
+
+    #[test]
+    fn upstream_is_paid_for_by_any_waiting_client_within_their_limit() {
+        let limit = RateLimit::new(quota(30, 60, 30), quota(1, 60, 1), quota(1, 60, 1));
+        let (a, b) = (client(1), client(2));
+
+        assert!(limit.check_upstream(&[a], MemoryPool::Secrets).is_ok());
+        // a has spent its allowance, but b is waiting too, so the request is still sent (and paid for by b).
+        assert!(limit.check_upstream(&[a, b], MemoryPool::Secrets).is_ok());
+        // everyone waiting is out of allowance.
+        assert!(limit.check_upstream(&[a, b], MemoryPool::Secrets).is_err());
+        // pools are limited separately.
+        assert!(limit.check_upstream(&[a], MemoryPool::Profiles).is_ok());
+    }
 }

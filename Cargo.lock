@@ -32,18 +32,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "actix-governor"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a7ffa43d3e1e92518355ffbc82c146b5f0fe24fba87f19f405270da7a7b3c1e"
-dependencies = [
- "actix-http",
- "actix-web",
- "futures",
- "governor",
-]
-
-[[package]]
 name = "actix-http"
 version = "3.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1125,9 +1113,9 @@ name = "hypixel_api"
 version = "1.4.1"
 dependencies = [
  "TinyUFO",
- "actix-governor",
  "actix-web",
  "futures",
+ "governor",
  "ltmdb",
  "lz4_flex",
  "mimalloc",
