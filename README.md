@@ -46,7 +46,8 @@ Everything is configured with environment variables. Only `API_KEY` is required,
 | `PROFILE_RATELIMIT_REQUESTS` | `5` | How many profile requests per `PROFILE_RATELIMIT_PERIOD_SECONDS` a client can make that have to be sent to hypixel (not in the cache or database). |
 | `PROFILE_RATELIMIT_PERIOD_SECONDS` | `60` | The period `PROFILE_RATELIMIT_REQUESTS` is measured over. |
 | `PROFILE_RATELIMIT_BURST` | `5` | How many of those requests a client can make at once before being limited. |
-| `UPSTREAM_TIMEOUT_SECONDS` | `10` | How long to wait for hypixel to answer a request before giving up with a `504`. |
+| `UPSTREAM_TIMEOUT_SECONDS` | `10` | How long to wait for hypixel to start answering a request before giving up with a `504`. |
+| `UPSTREAM_BODY_TIMEOUT_SECONDS` | `45` | How long to wait for the rest of hypixel's answer once it has started. Longer than the above, as a body that is lost is never cached and the next request has to go upstream again. |
 | `PROFILE_CACHE_TTL_SECONDS` | `120` | How long a profile (`/get/<uuid>`) stays in the memory cache. |
 | `PROFILE_DB_TTL_SECONDS` | `3600` | How long a profile stays in the on-disk database. A profile found there is served without asking hypixel. |
 | `SECRETS_TTL_SECONDS` | `120` | How long secrets (`/secrets/<uuid>`) stay in the memory cache. Secrets are not stored in the database. |

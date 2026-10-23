@@ -37,9 +37,7 @@ impl CacheKey for ProfileKey {
             }
         }
 
-        let res = request(uuid_key, format!("https://api.hypixel.net/v2/skyblock/profiles?uuid={}", self.uuid()), stats, waiting, Self::POOL).await?;
-
-        let bytes = res.bytes().await?;
+        let bytes = request(uuid_key, format!("https://api.hypixel.net/v2/skyblock/profiles?uuid={}", self.uuid()), stats, waiting, Self::POOL).await?;
 
         // the profile is already fetched, so failing to keep it for later is no reason to fail the request.
         let now = Instant::now();

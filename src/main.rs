@@ -4,7 +4,7 @@ use actix_web::{App, HttpServer, middleware::from_fn, web::Data};
 use mimalloc::MiMalloc;
 use tokio::{spawn, time::sleep};
 
-use crate::{cache::cache_router::CacheRouter, client::limit_requests, request_utils::CLIENT, routes::{profile::{PROFILE_CACHE_TTL_SECONDS, PROFILE_DB_TTL_SECONDS, profile}, secrets::{SECRETS_TTL_SECONDS, secrets}, stats::{RateLimit, quota, statistics}}};
+use crate::{cache::cache_router::CacheRouter, client::limit_requests, request_utils::{CLIENT, UPSTREAM_BODY_TIMEOUT, UPSTREAM_TIMEOUT}, routes::{profile::{PROFILE_CACHE_TTL_SECONDS, PROFILE_DB_TTL_SECONDS, profile}, secrets::{SECRETS_TTL_SECONDS, secrets}, stats::{RateLimit, quota, statistics}}};
 
 mod cache;
 mod client;
@@ -29,6 +29,8 @@ async fn main() -> std::io::Result<()> {
     LazyLock::force(&PROFILE_DB_TTL_SECONDS);
     LazyLock::force(&PROFILE_CACHE_TTL_SECONDS);
     LazyLock::force(&SECRETS_TTL_SECONDS);
+    LazyLock::force(&UPSTREAM_TIMEOUT);
+    LazyLock::force(&UPSTREAM_BODY_TIMEOUT);
     LazyLock::force(&CLIENT);
     println!("Listening on {ip_addr}:8000!");
 

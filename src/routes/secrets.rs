@@ -22,9 +22,8 @@ impl CacheKey for SecretsKey {
     }
     
     async fn get_or_insert(&self, _: &Database, rate_limit: &RateLimit, waiting: &Waiting<'_>) -> Result<(Bytes, Duration), ProcessError> {
-        let res = request(self.key(), format!("https://api.hypixel.net/v2/player?uuid={}", self.uuid()), rate_limit, waiting, Self::POOL).await?;
+        let bytes = request(self.key(), format!("https://api.hypixel.net/v2/player?uuid={}", self.uuid()), rate_limit, waiting, Self::POOL).await?;
 
-        let bytes = res.bytes().await?;
         // parsing the whole player is done off the thread that is answering requests.
         let count = spawn_blocking(move || {
             let mut bytes = BytesMut::from(bytes);
