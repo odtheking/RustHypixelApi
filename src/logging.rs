@@ -16,6 +16,13 @@ pub enum LogMessage {
         message: &'static str,
         code: u16,
     },
+    /// How long something for `key` took, and how many bytes it was.
+    ElapsedUserSize {
+        key: UuidKey,
+        elapsed: Duration,
+        message: &'static str,
+        size: usize,
+    },
     MessageAndUser {
         key: UuidKey,
         message: &'static str,
@@ -49,6 +56,9 @@ impl Display for LogMessage {
             }
             Self::ElapsedUserStatus { key, elapsed, message, code } => {
                 write!(f, "{message}: {key} ({code}; {elapsed:?})")
+            }
+            Self::ElapsedUserSize { key, elapsed, message, size } => {
+                write!(f, "{message}: {key} ({size} bytes; {elapsed:?})")
             }
             Self::MessageAndUser { key, message: field } => {
                 write!(f, "{field}: {key}")

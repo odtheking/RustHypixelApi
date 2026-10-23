@@ -1114,10 +1114,10 @@ version = "1.4.1"
 dependencies = [
  "TinyUFO",
  "actix-web",
+ "flate2",
  "futures",
  "governor",
  "ltmdb",
- "lz4_flex",
  "mimalloc",
  "portable-atomic",
  "rapidhash_lite",
@@ -1417,12 +1417,6 @@ dependencies = [
  "sharded-slab",
  "simple_defer",
 ]
-
-[[package]]
-name = "lz4_flex"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ef0d4ed8669f8f8826eb00dc878084aa8f253506c4fd5e8f58f5bce72ddb97e"
 
 [[package]]
 name = "memchr"

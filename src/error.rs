@@ -15,6 +15,8 @@ pub enum ProcessError {
     UpstreamTimeout,
     /// Hypixel could not be reached.
     UpstreamUnavailable,
+    /// Hypixel answered with a body that can't be read, which it sometimes does when it cuts one short.
+    UpstreamInvalid(String),
     Serialization(String),
     Database(String),
     /// Hypixel is rate limiting us.
@@ -32,6 +34,7 @@ impl Display for ProcessError {
             Self::Request(code) => write!(f, "Hypixel error: responded with {code}"),
             Self::UpstreamTimeout => f.write_str("Hypixel error: did not respond in time"),
             Self::UpstreamUnavailable => f.write_str("Hypixel error: could not be reached"),
+            Self::UpstreamInvalid(msg) => write!(f, "Hypixel error: sent an unreadable response ({msg})"),
             Self::ProxyRateLimit => f.write_str("Proxy error: too many requests, slow down"),
             Self::InternalServer(msg) => write!(f, "Proxy error: {msg}"),
             Self::Serialization(msg) => write!(f, "Proxy error: could not read the response ({msg})"),
@@ -43,9 +46,14 @@ impl Display for ProcessError {
 impl Error for ProcessError {}
 
 impl ProcessError {
+    /// Hypixel's body couldn't be read, because of `err`.
+    pub fn upstream_invalid(err: impl Display) -> Self {
+        Self::UpstreamInvalid(err.to_string())
+    }
+
     /// Whether hypixel is why the request failed, as opposed to the client being rate limited or something being wrong here.
     pub const fn is_upstream(&self) -> bool {
-        matches!(self, Self::HypixelRateLimit | Self::Request(_) | Self::UpstreamTimeout | Self::UpstreamUnavailable)
+        matches!(self, Self::HypixelRateLimit | Self::Request(_) | Self::UpstreamTimeout | Self::UpstreamUnavailable | Self::UpstreamInvalid(_))
     }
 }
 
@@ -81,7 +89,7 @@ impl From<ltmdb::Error> for ProcessError {
 impl ResponseError for ProcessError {
     fn status_code(&self) -> ActixStatusCode {
         match self {
-            Self::Request(_) | Self::UpstreamUnavailable => ActixStatusCode::BAD_GATEWAY,
+            Self::Request(_) | Self::UpstreamUnavailable | Self::UpstreamInvalid(_) => ActixStatusCode::BAD_GATEWAY,
             Self::UpstreamTimeout => ActixStatusCode::GATEWAY_TIMEOUT,
             Self::HypixelRateLimit | Self::ProxyRateLimit => ActixStatusCode::TOO_MANY_REQUESTS,
             _ => ActixStatusCode::INTERNAL_SERVER_ERROR,

@@ -145,29 +145,37 @@ impl Partition {
         let mut buffer = BytesMut::with_capacity(BUFFER_SIZE);
         let mut entries: Vec<(SizedBytes, PartitionEntry)> = Vec::new();
         let keys: SegQueue<SizedBytes> = SegQueue::new();
-        let mut position: usize = 0;
+        let file_len = file.metadata()?.len() as usize;
+        let mut position: usize = 0; // where the next entry starts.
 
-        loop {
-            let read = fill(&mut file, &mut buffer)?; 
-            if read == 0 { break; } // EOF
+        while position < file_len {
+            let key_len = buffer.chunk().first_chunk::<KEY_LEN_SIZE>().map(|len| u64::from_be_bytes(*len) as usize);
+            let entry_metadata_len = key_len.map_or(KEY_LEN_SIZE, |key_len| KEY_LEN_SIZE.saturating_add(key_len).saturating_add(VALUE_LEN_SIZE));
 
-            // Attempt to refill the buffer if it isnt long enough to read all needed metadata
-            if buffer.len() < KEY_LEN_SIZE { continue }
-            let key_len = u64::from_be_bytes(buffer.chunk()[..KEY_LEN_SIZE].try_into().expect("Should have verified buffer is long enough")) as usize; 
-            let entry_metadata_len = KEY_LEN_SIZE + key_len + VALUE_LEN_SIZE;
-            
-            // Reserve space if the entry metadata is longer than `BUFFER_SIZE`
-            if buffer.capacity() < entry_metadata_len { buffer.reserve(entry_metadata_len - buffer.len()); }
-            if buffer.len() < entry_metadata_len { continue }
+            // keys are never empty, so an empty one is a gap left by a write that didn't finish. Either that or an entry running past the
+            // end of the file means the rest of it can't be trusted, and it is cut off below.
+            if key_len == Some(0) || position.saturating_add(entry_metadata_len) > file_len { break; }
 
-            position += entry_metadata_len;
-            
+            // Only refill once the buffer doesn't hold all of the next entry's metadata. Filling first would hit EOF while entries read
+            // along with an earlier one are still in the buffer, so only the first entry of each file would be loaded.
+            if buffer.len() < entry_metadata_len {
+                // Reserve space if the entry metadata is longer than `BUFFER_SIZE`
+                if buffer.capacity() < entry_metadata_len { buffer.reserve(entry_metadata_len - buffer.len()); }
+                if fill(&mut file, &mut buffer)? == 0 { break; } // EOF
+                continue;
+            }
+            let key_len = key_len.expect("Should have verified buffer is long enough");
+
+            let value_len_at = KEY_LEN_SIZE + key_len;
+            let value_len = u64::from_be_bytes(buffer.chunk()[value_len_at..entry_metadata_len].try_into().expect("Should have verified buffer is long enough")) as usize;
+            let value_position = position + entry_metadata_len;
+            if value_position.saturating_add(value_len) > file_len { break; }
+
             buffer.advance(KEY_LEN_SIZE); // we previously already got key length and dont need to get it again, just advance as if we did.
             let key = SizedBytes::from(&buffer.chunk()[..key_len]);
-            buffer.advance(key_len);
+            buffer.advance(key_len + VALUE_LEN_SIZE);
             keys.push(key.clone());
-            
-            let value_len = buffer.get_u64() as usize;
+
             if buffer.remaining() >= value_len {
                 buffer.advance(value_len);
             } else {
@@ -175,9 +183,16 @@ impl Partition {
                 buffer.clear(); // clear the buffer so the start of the buffer is free for the next entry's metadata.
                 file.seek_relative((value_len - read) as i64)?;
             }
-            
-            entries.push((key, PartitionEntry { position: position as u64, value_len}));
-            position += value_len;
+
+            entries.push((key, PartitionEntry { position: value_position as u64, value_len}));
+            position = value_position + value_len;
+        }
+
+        // Anything after the last whole entry is a write that didn't finish. It is cut off so appends continue from the last entry, rather
+        // than after bytes that the next load would read as part of an entry. A file that can't be cut is still loaded: appends then go
+        // after the unfinished write, where the next load stops again, which only loses entries a cache can fetch again.
+        if position < file_len {
+            let _ = file.set_len(position as u64);
         }
 
         let inner = PendingPartition {
@@ -209,7 +224,7 @@ fn fill<R: Read>(reader: &mut R, buf: &mut BytesMut) -> io::Result<usize> {
     };
     
     let n = reader.read(dst)?;
-    
+
     // SAFETY: Read::read returns the number of written bytes.
     unsafe {
         buf.set_len(buf.len() + n);

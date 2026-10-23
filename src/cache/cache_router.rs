@@ -15,7 +15,8 @@ const MAX_STALE: Duration = Duration::from_secs(3600);
 
 // The memory cache is sized by number of entries, not bytes. Profiles are large (potentially hundreds of KB) so that cache is kept small,
 // a profile miss only costs a database read. Secrets are tiny but every miss is a hypixel request, so that cache is large.
-static PROFILE_CACHE_SIZE: LazyLock<usize> = LazyLock::new(|| env_var("PROFILE_CACHE_SIZE", 512));
+// Profiles are kept gzipped, about half the size of the plain json, so twice as many fit in the memory that used to hold 512.
+static PROFILE_CACHE_SIZE: LazyLock<usize> = LazyLock::new(|| env_var("PROFILE_CACHE_SIZE", 1024));
 static SECRETS_CACHE_SIZE: LazyLock<usize> = LazyLock::new(|| env_var("SECRETS_CACHE_SIZE", 10_000));
 
 pub type Database = ltmdb::Database<TokioRT, RandomHash>;
@@ -165,6 +166,10 @@ impl CacheRouter {
                         Ok(data)
                     }
                     Err(err) => {
+                        // rate limits and hypixel not answering are already logged where they happen.
+                        if matches!(err, ProcessError::UpstreamInvalid(_) | ProcessError::Serialization(_) | ProcessError::Database(_) | ProcessError::InternalServer(_)) {
+                            log(LogMessage::KeyError { key: k, message: "Fetch failed", error: err.to_string() });
+                        }
                         router.set_failure(k, Some(err.clone()));
                         Err(err)
                     }
@@ -198,6 +203,7 @@ impl CacheRouter {
     }
 }
 
+#[derive(Clone)]
 pub struct TokioRT;
 impl Runtime for TokioRT {
     fn spawn<T>(task: T)

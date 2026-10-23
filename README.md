@@ -51,7 +51,7 @@ Everything is configured with environment variables. Only `API_KEY` is required,
 | `PROFILE_CACHE_TTL_SECONDS` | `120` | How long a profile (`/get/<uuid>`) stays in the memory cache. |
 | `PROFILE_DB_TTL_SECONDS` | `3600` | How long a profile stays in the on-disk database. A profile found there is served without asking hypixel. |
 | `SECRETS_TTL_SECONDS` | `120` | How long secrets (`/secrets/<uuid>`) stay in the memory cache. Secrets are not stored in the database. |
-| `PROFILE_CACHE_SIZE` | `512` | Max number of profiles in the memory cache. Counted in entries, not bytes, and a profile can be hundreds of KB, so this is the one that costs memory. A miss only costs a database read. |
+| `PROFILE_CACHE_SIZE` | `1024` | Max number of profiles in the memory cache. Counted in entries, not bytes, and a profile can be hundreds of KB gzipped (up to a few MB for the largest), so this is the one that costs memory. A miss only costs a database read. |
 | `SECRETS_CACHE_SIZE` | `10000` | Max number of secrets in the memory cache. Entries are tiny, and a miss costs a hypixel request, so keep this large. |
 
 The memory caches are separate so profiles can never push secrets out.
@@ -66,6 +66,10 @@ When a request is already being fetched, everyone asking for the same thing wait
 
 Clients are identified by the `X-Real-IP` header set by the reverse proxy, falling back to `X-Forwarded-For`, and these are only trusted when the connection comes from a loopback or private address (your proxy), otherwise the connection address is used. The fallback can be set by the client, so make sure your proxy sets `X-Real-IP` (the nginx config from the install script does). ipv6 clients are limited by their /64.
 
+### Compression
+
+Profiles are fetched from hypixel gzipped and kept that way, in memory and in the database. Clients that send `Accept-Encoding: gzip` get them as is (`Content-Encoding: gzip`), with no work done per request, and clients that don't get them unzipped. Secrets are a single number and are always plain.
+
 ### Errors
 
 Errors are plain text, short enough for a client to show to the user as is. The message says who the error is from, `Hypixel error` or `Proxy error`, and then what it is:
@@ -76,6 +80,7 @@ Errors are plain text, short enough for a client to show to the user as is. The 
 | `429` | `Proxy error: too many requests, slow down` |
 | `502` | `Hypixel error: responded with 403 Forbidden` (whatever status hypixel answered with) |
 | `502` | `Hypixel error: could not be reached` |
+| `502` | `Hypixel error: sent an unreadable response (...)` (hypixel answered 200 with a body cut short, it is not cached) |
 | `504` | `Hypixel error: did not respond in time` |
 | `400` | `Proxy error: invalid uuid` |
 | `500` | `Proxy error: ...` |
